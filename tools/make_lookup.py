@@ -3,9 +3,11 @@
 
 Cycles with include_in_lookup=1 and a 90% time are grouped by flour class and carryover bucket
 (starter / total). Time-like values (ready, peak, plateau) and the rise ratio are averaged with the
-geometric mean, because fermentation time scales multiplicatively (a few hours slower is about the same
-proportional effect at any dilution) and the spread is skewed; the arithmetic mean of 8 h and 16 h is 12 h,
-the geometric mean 11.3 h. `ready_gsd` is the geometric standard deviation, a factor: about 68% of cycles fall
+geometric mean, on the working assumption that temperature and starter vigor change fermentation time by a
+factor, and because times are positive and skewed (the arithmetic mean of 8 h and 16 h is 12 h, the geometric
+mean 11.3 h). The model in starter-experiments.md is additive in time, so this is a modelling choice, not an
+established fact; at the current spread the two means differ by about 0.1 h. Revisit when there is enough data
+to compare fits of ln(time) against time on their residuals. `ready_gsd` is the geometric standard deviation, a factor: about 68% of cycles fall
 within ready_gmean_h / gsd to ready_gmean_h * gsd (blank when n < 2). Temperature is averaged arithmetically.
 """
 import csv, math

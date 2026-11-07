@@ -24,7 +24,7 @@ Conventions: local time, grams, hours from the feed. `carryover_frac` = starter 
 
 ## Lookup
 
-`tools/make_lookup.py` averages `ready_90_h` and the other time-like values with the **geometric mean** and reports `ready_gsd`, a multiplicative spread factor (1.25 means about a quarter above or below), because times scale proportionally. Temperature is averaged normally. No min/max.
+`tools/make_lookup.py` averages `ready_90_h` and the other time-like values with the **geometric mean** and reports `ready_gsd`, a multiplicative spread factor (1.25 means about a quarter above or below), on the working assumption that temperature and starter vigor change times by a factor. It is a modelling choice; at today's spread it differs from the arithmetic mean by about 0.1 h. To be revisited when there is enough data to fit. Temperature is averaged normally. No min/max.
 
 ```
 tools/make_lookup.py
