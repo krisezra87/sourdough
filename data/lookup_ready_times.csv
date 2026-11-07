@@ -1,0 +1,5 @@
+flour_class,carryover_bucket,n,ready_gmean_h,ready_gsd,peak_gmean_h,plateau_gmean_h_closed,n_plateau_open,rise_ratio_gmean,temp_f_mean,runs
+whole_wheat,<10%,1,15.9,,18.6,,1,1.31,,run1_starter_amt
+whole_wheat,15-20%,2,9.6,1.25,14.6,,1,1.44,,run1_starter_amt;wheat_vs_AP_feed1
+whole_wheat,20-25%,1,8.0,,9.0,,0,1.46,,wheat_vs_AP_feed1
+whole_wheat,25%+,5,8.4,1.12,10.9,2.3,2,1.54,,run0_pint;run1_starter_amt;run1_weck_overnight

@@ -1,0 +1,8 @@
+id,run_id,jar,time_local,tag,text
+1,wheat_vs_AP_feed1,2,2026-11-05 21:15,handling,"Right (wheat) jar shifted about 90 px to the right around this feed; fixed measuring columns then read counter and shadow (use columns 2300-2470 for the wheat jar, 1740-2010 for the AP jar)"
+2,wheat_vs_AP_feed1,2,2026-11-06 09:00,unrecorded_feed,"Wheat jar fed about 09:00 after the bread levain was taken; weights not recorded, 100% hydration (user said approx 9a; bread made 09:00-09:30)"
+3,wheat_vs_AP_feed1,2,2026-11-06 09:15,withdrawal,153 g of ripe wheat starter taken for The Perfect Loaf easy no-knead bread (2 loaves)
+4,wheat_vs_AP_feed1,,2026-11-05 08:00,temperature,Meater-based sensor.starter_pantry_temperature already unavailable at 08:00 EST (start of the history queried); cause unknown; no temperature for any cycle
+5,wheat_vs_AP_feed1,,2026-11-06 21:00,missed,Planned Run 2 flour axis start missed because the mother jars were not fed; replaced by wheat_vs_AP_feed2
+6,wheat_vs_AP_feed1,,2026-11-07 09:00,handling,Jars handled by the household and the pressure cooker behind them removed before 09:30; frames at 09:30 and 10:00 are valid; jars not adjusted for feeding until between 10:00 and 10:30
+7,wheat_vs_AP_feed2,,2026-11-07 10:21,run_name,input_text.starter_run set to wheat_vs_AP_feed2; design and purpose of this experiment not stated by user

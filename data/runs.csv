@@ -1,0 +1,8 @@
+run_id,kind,jar_type,start_date,end_date,notes
+run0_bonne_maman,experiment,Bonne Maman,2026-10-08,2026-10-09,"Three small jars, uncovered; scale doubtful; excluded from the lookup"
+run1_weck_overnight,experiment,Weck,2026-10-07,2026-10-08,"Single Weck jar test, 77:102:102"
+run0_pint,experiment,pint,2026-10-12,2026-10-13,"Three identical pint jars, 30:35:35, calibration and replicates"
+run1_starter_amt,experiment,pint,2026-10-13,2026-10-14,"Ratio axis: 30, 16 and 4 g starter in pint jars"
+watch_revival,revival,Weck,2026-10-30,2026-11-02,Revival of a 2-week fridge starter in watch mode; feed log is incomplete; no height series
+wheat_vs_AP_feed1,single_jar_cycles,Weck,2026-11-05,2026-11-07,"Two independent Weck-jar runs sharing the camera (wheat right, AP left); three feeds each; AP read by eye"
+wheat_vs_AP_feed2,single_jar_cycles,Weck,2026-11-07,,Started 2026-11-07 10:13 (AP) and 10:19 (wheat) after the planned Run 2 night was missed; purpose not stated
