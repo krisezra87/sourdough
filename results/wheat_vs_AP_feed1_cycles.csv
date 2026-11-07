@@ -1,0 +1,7 @@
+jar,jar_side,flour,fed_at,starter_g,flour_g,water_g,method,start_level,peak_time,hours_to_peak,rise_ratio,hours_to_90pct,end_vs_peak,notes
+1,left,Gold Medal AP,2026-11-05 10:30,22,44,44,by-eye ruler,55,2026-11-05 19:00-21:00,8.5-10.5,1.6,,1.0,rising only after 15:00 (lag about 5-6 h); first AP feed from the wheat starter
+1,left,Gold Medal AP,2026-11-05 21:58,24,46,46,by-eye ruler,45,2026-11-06 07:00-09:00,9-11,1.8,,0.75,slow start (little rise before 03:00); about 65 of 80 units by 11:00 before the next feed
+1,left,Gold Medal AP,2026-11-06 11:25,27,51,52,by-eye ruler,50,2026-11-06 18:00-22:00,6.5-10.5,1.6,,0.75,sank to about 62 of 82 units by 08:30 on 11-07 (about 22 h); no collapse; ruler units are 1.5 px per unit of the cropped frame
+2,right,King Arthur whole wheat,2026-11-05 10:30,25,45,45,colour (columns 2300-2470),1.0,2026-11-05 19:30,9.0,1.46,8.0,1.0,
+2,right,King Arthur whole wheat,2026-11-05 21:15,35,83,84,colour (columns 2300-2470),1.35,2026-11-06 08:00,10.8,1.61,8.2,0.99,fed time approximate; jar moved about +90 px to the right around this feed
+2,right,King Arthur whole wheat,2026-11-06 09:00,,,,colour (columns 2300-2470),1.26,2026-11-06 18:00-04:00 plateau,about 9-19,1.36,8.0,0.81,"weights not recorded; fed time approximate (09:00-09:30); flat until 14:00 (lag about 5 h), 90% at 17:00, plateau 18:00-04:00, then fell to about 1.39 by 10:00"

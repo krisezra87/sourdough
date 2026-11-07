@@ -1,0 +1,24 @@
+{
+  "run": "run1_weck_overnight",
+  "jars": [
+    {
+      "jar": "1",
+      "position": "single Weck jar",
+      "fed_at": "2026-10-07 21:50",
+      "flour": "King Arthur whole wheat",
+      "starter_g": "77",
+      "flour_g": "102",
+      "water_g": "102",
+      "time_to_peak_min": 490,
+      "lag_min": 134,
+      "half_rise_min": 263,
+      "rise_80_min": 368,
+      "ready_90_min": 414,
+      "plateau_min": 180,
+      "plateau_still_going_at_end": true,
+      "rise_ratio": 1.54,
+      "weak_rise": false,
+      "frames": 24
+    }
+  ]
+}

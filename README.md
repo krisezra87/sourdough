@@ -4,6 +4,18 @@ Starter experiments: how feed ratio and flour change the time to ripe. The end g
 
 Home Assistant runs the camera and notifications and lives in `~/GIT/ha-repo`; this repo holds the data and analysis.
 
+## Layout
+
+| Path | What |
+|---|---|
+| `data/` | curated CSV tables (below) |
+| `results/` | per-run outputs of the measuring scripts (height series, summaries, QA sheets) |
+| `photos/` | timelapse frames, gitignored (pulled from the HA machine with `tools/sync.sh <run>`) |
+| `tools/` | measuring, summary, sync and watch-mode scripts, and `make_lookup.py` |
+| `experiments.md` | the experiment plan and status; `docs/pipeline.md` how the camera pipeline fits together; `docs/timelapse.md` the original setup notes |
+
+Moved here from `ha-repo/starter/` on 2026-11-07. Home Assistant keeps only what it needs: the helpers, automations and scripts that take the photos, the "Starter" dashboard and its chart images (`www/starter/`, written by `tools/summarize_run.py` into `HA_REPO`, default `~/GIT/ha-repo`). Watch mode's timer runs from here: after any move of this repo, re-run `tools/install-watch.sh`.
+
 ## Data (`data/`, plain CSV, edited directly)
 
 | Table | One row per | What it holds |

@@ -1,0 +1,62 @@
+{
+  "run": "run1_starter_amt",
+  "jars": [
+    {
+      "jar": "1",
+      "position": "left",
+      "fed_at": "2026-10-13 12:18",
+      "flour": "King Arthur whole wheat",
+      "starter_g": "30",
+      "flour_g": "36",
+      "water_g": "36",
+      "time_to_peak_min": 762,
+      "lag_min": 155,
+      "half_rise_min": 391,
+      "rise_80_min": 478,
+      "ready_90_min": 539,
+      "plateau_min": 240,
+      "plateau_still_going_at_end": false,
+      "rise_ratio": 2.14,
+      "weak_rise": false,
+      "frames": 49
+    },
+    {
+      "jar": "2",
+      "position": "middle",
+      "fed_at": "2026-10-13 12:21",
+      "flour": "King Arthur whole wheat",
+      "starter_g": "16",
+      "flour_g": "40",
+      "water_g": "40",
+      "time_to_peak_min": 1179,
+      "lag_min": 280,
+      "half_rise_min": 432,
+      "rise_80_min": 620,
+      "ready_90_min": 676,
+      "plateau_min": 780,
+      "plateau_still_going_at_end": true,
+      "rise_ratio": 1.28,
+      "weak_rise": false,
+      "frames": 49
+    },
+    {
+      "jar": "3",
+      "position": "right",
+      "fed_at": "2026-10-13 12:26",
+      "flour": "King Arthur whole wheat",
+      "starter_g": "4",
+      "flour_g": "40",
+      "water_g": "40",
+      "time_to_peak_min": 1114,
+      "lag_min": 429,
+      "half_rise_min": 626,
+      "rise_80_min": 850,
+      "ready_90_min": 955,
+      "plateau_min": 450,
+      "plateau_still_going_at_end": true,
+      "rise_ratio": 1.31,
+      "weak_rise": false,
+      "frames": 49
+    }
+  ]
+}
