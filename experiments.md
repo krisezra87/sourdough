@@ -22,6 +22,15 @@ SAMPLE_EVERY = 30 min
 
 ---
 
+## Direction change (2026-11-12): routine over experiments
+
+The goal is no longer "one feed per day". Success now means: least hands-on time per refresh, least discard (without unmeasurably small amounts or risk to the starter), tolerance of a late feed (the old 2x-daily schedule was the one getting missed), and using the fridge where it helps. The user bakes about weekly, often deciding the day before, and needs 153 g (Perfect Loaf no-knead) or 120 g (second recipe) of levain.
+
+- **Plan:** one whole wheat mother (about 35 g, 100% hydration) in the fridge; the night before a bake the whole jar is built into the levain (30:75:75 or 25:60:60), and the leftover becomes the next mother. No-bake weeks: scrape to 10 g, feed 12:12, fridge. Back-to-back bakes repeat the night build, jar in the fridge during the day. The working schedule is `docs/starter_schedule.tex` (compile with `latexmk -pdf` in `docs/`).
+- **Testing style:** one-jar routine trials with the camera, not parallel multi-jar runs (those generated most of the discard). AP is dropped on texture (thin, runny); whole wheat kept.
+- **Scale:** it ignores slow additions even away from zero (likely zero tracking / creep compensation), so add in single dumps and confirm by lift-and-replace. Water by volume (60 mL syringe, 100 mL cylinder); flour pre-portioned. A replacement scale needs 2 kg+ for bread and switchable zero tracking.
+- **Open tests:** fridge-to-levain dry run (untested), texture/hydration test (100/80/64%), a dedicated pantry temperature probe, a deliberate two-week gap.
+
 ## Current status (updated 2026-10-13, written so a fresh session can pick up)
 
 **Run 1 (ratio axis, run name `run1_starter_amt`, pint jars) finished 2026-10-14 13:30; results are below.** Setup: Left to right, left closest to the wall. Same starter as the Run 0 pint jars, whole wheat (King Arthur), 100% hydration, lids on:
