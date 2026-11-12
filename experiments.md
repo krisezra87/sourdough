@@ -221,7 +221,8 @@ A fixed camera and fixed jars mean that "higher or lower than last picture" is m
 
   The 50/50 carryover is half of each so that it matches the flour mix; this was decided on 11-06 because the earlier notes did not specify it (confirmed by the user 2026-11-06).
 - **Cycles:** cycle 1 is tonight's feed and shows each flour's immediate response. Cycle 2 is a second feed of the same three jars, same ratio and flour, with the same run name; it shows the adapted behavior (per the standard procedure). No new starter is needed for it.
-- **Repeats:** at least two independent sets on different nights (run names `run2b_flour_axis`, `run2c_flour_axis`), each seeded from freshly refreshed source jars, because two runs at a similar dilution have disagreed by over 1.5 h. The between-run spread is the main error.
+- **Decision (user, 2026-11-11):** `run2_flour_axis_2` is the last flour-axis set (two cycles: 11-10 21:10-21:22 and 11-11 09:15-09:26); `run2b`/`run2c` are not planned. Next step is to home in on a flour mix, and the user will move to a single mother starter (the two-mother setup ends). Mix and design are not yet chosen.
+- **Repeats (original plan, superseded by the decision above):** at least two independent sets on different nights (run names `run2b_flour_axis`, `run2c_flour_axis`), each seeded from freshly refreshed source jars, because two runs at a similar dilution have disagreed by over 1.5 h. The between-run spread is the main error.
 - **Before starting:** set `input_text.starter_run` to `run2_flour_axis` (still `wheat_vs_AP_feed1` as of 11-06 midday); put a room thermometer in the pantry; check all three jars are in camera view; weigh each carryover by gross weight (Weck jar about 399 g).
 - **Log for every jar:** gross weights, flour brand, position, time fed, time since each starter's last feed and its state, temperature, lids on or off.
 - **Analysis:** `measure_heights.py` with jar columns taken from the first frame (the jar detector is unreliable on smeared glass, so check the QA sheet by eye); headline metric is time to 90% of the rise.
@@ -235,6 +236,14 @@ Two independent Weck-jar runs that happened to share the camera. Each jar's cycl
 - **Pattern worth testing:** with similar carryover (about 17-21%), AP peaked later and more variably than wheat (9-11 h, with a long flat top) and sagged more slowly than wheat overnight; the wheat jar reached 90% of its rise within about 8 h each time. Two runs of the same feed differ by 1 h or more either way, so these are single observations.
 - **Next feeds:** both jars were fed again for `wheat_vs_AP_feed2` at 10:13 (AP) and 10:19 (wheat) on 11-07, about 23 h and 25 h after their last feed.
 - **Temperature:** none recorded (probe offline), so the pantry temperature is an unknown in all of these timings.
+
+#### run2_flour_axis_2 observations (2026-11-10 21:10 to 2026-11-12 10:00, 74 frames at 30 min)
+Second flour-axis set (wheat left, 50/50 middle, AP right; 16 : 40 : 40 each, plastic wrap on the tops). Readings are by eye from time-vs-row strips, +/-20 px, times +/-1 h; per-cycle numbers are in `data/cycles.csv`, key surface readings in `data/readings_by_eye.csv`.
+- **Cycle 1 (fed 21:10-21:22):** refed at about 11.7 h while still rising (the 50/50 and AP steeply, at least 1.7x and 1.55x; wheat slowly, at least 1.5x), so ready and peak were not observed (lower bounds only). Set 1 peaked by about 10.5-11.2 h, so this was slower; no temperature recorded.
+- **Cycle 2 (fed 09:15-09:26 on 11-11), per-frame read:** ready (90% of rise) 10 h 05 min (AP), 10 h 30 min (50/50), 12 h 45 min (wheat); peak about 12 h 10 min, 12 h 15 min and 15 h 05 min; rise 1.60x, 1.87x, 1.73x. So wheat was about 2-2.5 h slower than the other two to ripen, which is more than the +/-1 h reading error. At 24.6 h: wheat 0.87 of peak, 50/50 0.66, AP about 1.0 (flat top, no sag).
+- **Hold order differs from set 1** (there wheat held best and AP sagged), so hold behavior is noisy. By-eye readings of every frame are in `docs/run2_flour_axis_2_by_eye.md`.
+- **Design lesson:** a second feed at about 12 h cuts cycle 1 off before the peak when the starter is slower than expected; leave a cycle to run to its drop-off if the peak is the goal.
+- **Decision:** this is the last flour-axis set (user, 2026-11-11); the next step is choosing a flour mix and moving to a single mother.
 
 ### Run 3: Sitting past peak
 **Why:** checks whether a once-daily schedule is realistic, i.e. whether it collapses or recovers normally at the next feed.

@@ -2,6 +2,14 @@
 """Summarise one run's dough-height series for the dashboard's "Past runs" card.
 
 Usage: tools/summarize_run.py <run> [--title "Run 1: Weck jar, Oct 7-8"]
+                               [--cycle K [--censored]]
+
+  --cycle K    for a run where each jar was fed more than once: use only the K-th
+               feed of each jar (feeds ordered by fed_at) and the frames from that
+               feed up to the jar's next feed; outputs are named <run>_cK
+  --censored   the cycle was cut off by the next feed before the peak, so ready,
+               peak, lag, half rise and plateau are shown as not reached and the
+               rise ratio as a lower bound
 
 Reads   results/<run>_height.csv   (time_local, [jar], dough_height_px, ...;
                                             see tools/measure_heights.py)
@@ -38,20 +46,36 @@ FMT = "%Y-%m-%d %H:%M"
 WEAK = 1.10
 
 
-def load(run):
+def load(run, cycle=None):
     series = {}
     with open(ROOT / "results" / f"{run}_height.csv") as fh:
         for r in csv.DictReader(fh):
             jar = r.get("jar") or "1"
             series.setdefault(jar, []).append(
                 (datetime.strptime(r["time_local"], FMT), float(r["dough_height_px"])))
+    feeds = {}
     with open(ROOT / "data" / "feeds.csv") as fh:
-        # one row per jar; a run with several feeds of a jar keeps the last (use a single-feed run)
-        feed = {r["jar"]: {**r, "run": r["run_id"], "position_left_to_right": r["position"],
-                           "flour_type": r["flour_name"],
-                           **{k: r[k][:-2] if r[k].endswith(".0") else r[k]
-                              for k in ("starter_g", "flour_g", "water_g")}}
-                for r in csv.DictReader(fh) if r["run_id"] == run}
+        for r in csv.DictReader(fh):
+            if r["run_id"] != run:
+                continue
+            feeds.setdefault(r["jar"], []).append(
+                {**r, "run": r["run_id"], "position_left_to_right": r["position"],
+                 "flour_type": r["flour_name"],
+                 **{k: r[k][:-2] if r[k].endswith(".0") else r[k]
+                    for k in ("starter_g", "flour_g", "water_g")}})
+    feed = {}
+    for jar, lst in feeds.items():
+        lst.sort(key=lambda r: r["fed_at"])
+        if cycle is None:
+            feed[jar] = lst[-1]     # a run with several feeds of a jar keeps the last
+            continue
+        if len(lst) < cycle:
+            sys.exit(f"jar {jar} has only {len(lst)} feed(s), no cycle {cycle}")
+        feed[jar] = lst[cycle - 1]
+        lo = datetime.strptime(lst[cycle - 1]["fed_at"], FMT)
+        hi = datetime.strptime(lst[cycle]["fed_at"], FMT) if len(lst) > cycle else None
+        if jar in series:
+            series[jar] = [p for p in series[jar] if p[0] >= lo and (hi is None or p[0] < hi)]
     missing = [j for j in series if j not in feed]
     if missing:
         sys.exit(f"no data/feeds.csv row for run={run} jar={missing}")
@@ -82,7 +106,7 @@ def hm(minutes):
     return f"{h} h" if m == 0 else f"{h} h {m:02d} min"
 
 
-def summarise_jar(jar, pts, feed):
+def summarise_jar(jar, pts, feed, censored_cycle=False):
     ts = [p[0] for p in pts]
     start = statistics.mean([p[1] for p in pts[:2]])
     rel = [p[1] / start for p in pts]
@@ -115,8 +139,20 @@ def summarise_jar(jar, pts, feed):
         "rise_ratio": round(peak, 2),
         "weak_rise": peak < WEAK,
         "frames": len(pts),
+        "cycle_censored": censored_cycle,
     }
     return out, ts, sm
+
+
+FLOUR_LABEL = {"whole_wheat": "Whole wheat", "ap": "All-purpose", "blend": "50/50"}
+
+
+def jar_label(s, mixed):
+    """'Jar N (left)' when every jar has the same flour, else the flour name and position."""
+    if mixed:
+        fl = FLOUR_LABEL.get(s.get("flour_class", ""), s["flour"])
+        return f"{fl} ({s['position']})" if s["position"] else fl
+    return f"Jar {s['jar']}" + (f" ({s['position']})" if s["position"] else "")
 
 
 def chart(run, jars, title, subtitle):
@@ -173,36 +209,46 @@ def cards(run, summaries, title):
     star = lambda s: "*" if s["weak_rise"] else ""
     plateau = lambda s: hm(s["plateau_min"]) + ("+" if s["plateau_still_going_at_end"] else "") + star(s)
     grams = lambda s: f"{s['starter_g']} g / {s['flour_g']} g / {s['water_g']} g"
+    cen = any(s["cycle_censored"] for s in summaries)
+    NR = "not reached"
+    ready = lambda s: NR if cen else hm(s["ready_90_min"])
+    peakt = lambda s: NR if cen else hm(s["time_to_peak_min"])
+    lagt = lambda s: "n/a" if cen else hm(s["lag_min"])
+    halft = lambda s: "n/a" if cen else hm(s["half_rise_min"])
+    plat = lambda s: "n/a" if cen else plateau(s)
+    rise = lambda s: (f"{s['rise_ratio']:.2f}× or more" if cen else f"{s['rise_ratio']:.2f}×")
+    mixed = len(flours) > 1
     ind = " " * 14
     if len(summaries) == 1:
         s = summaries[0]
         body = "\n".join([
             f"{ind}| | |", f"{ind}|---|---|",
-            f"{ind}| **Ready (90% of rise)** | **{hm(s['ready_90_min'])}**{star(s)} |",
-            f"{ind}| Time to peak | {hm(s['time_to_peak_min'])}{star(s)} |",
+            f"{ind}| **Ready (90% of rise)** | **{ready(s)}**{star(s)} |",
+            f"{ind}| Time to peak | {peakt(s)}{star(s)} |",
             f"{ind}| **Flour** | {s['flour']} |",
             f"{ind}| **Starter / flour / water** | {grams(s)} |",
-            f"{ind}| Lag | {hm(s['lag_min'])} |",
-            f"{ind}| Time to half rise | {hm(s['half_rise_min'])} |",
-            f"{ind}| Plateau | {plateau(s)} |",
-            f"{ind}| Rise ratio | {s['rise_ratio']:.2f}× |",
+            f"{ind}| Lag | {lagt(s)} |",
+            f"{ind}| Time to half rise | {halft(s)} |",
+            f"{ind}| Plateau | {plat(s)} |",
+            f"{ind}| Rise ratio | {rise(s)} |",
         ])
     else:
-        names = [f"**Jar {s['jar']}**" + (f" ({s['position']})" if s["position"] else "") for s in summaries]
+        names = ([f"**{jar_label(s, True)}**" for s in summaries] if mixed else
+                 [f"**Jar {s['jar']}**" + (f" ({s['position']})" if s["position"] else "") for s in summaries])
         row = lambda label, f: f"{ind}| {label} | " + " | ".join(f(s) for s in summaries) + " |"
         lines = []
         if len(flours) == 1:
             lines += [f"{ind}**Flour:** {flours[0]}", ""]
         lines += [f"{ind}| | " + " | ".join(names) + " |", f"{ind}|---|" + "---|" * len(summaries),
-                  row("**Ready (90% of rise)**", lambda s: f"**{hm(s['ready_90_min'])}**{star(s)}"),
-                  row("Time to peak", lambda s: hm(s["time_to_peak_min"]) + star(s))]
+                  row("**Ready (90% of rise)**", lambda s: f"**{ready(s)}**{star(s)}"),
+                  row("Time to peak", lambda s: peakt(s) + star(s))]
         if len(flours) > 1:
             lines.append(row("**Flour**", lambda s: s["flour"]))
         lines += [row("**Starter / flour / water**", grams),
-                  row("Lag", lambda s: hm(s["lag_min"]) + star(s)),
-                  row("Time to half rise", lambda s: hm(s["half_rise_min"]) + star(s)),
-                  row("Plateau", plateau),
-                  row("Rise ratio", lambda s: f"{s['rise_ratio']:.2f}×")]
+                  row("Lag", lambda s: lagt(s) + star(s)),
+                  row("Time to half rise", lambda s: halft(s) + star(s)),
+                  row("Plateau", plat),
+                  row("Rise ratio", rise)]
         if any(s["weak_rise"] for s in summaries):
             lines += ["", f"{ind}\\* rise under 10%: within measurement noise, so these times are unreliable"]
         body = "\n".join(lines)
@@ -220,18 +266,26 @@ def main(args):
         sys.exit(__doc__)
     run = args[0]
     title = args[args.index("--title") + 1] if "--title" in args else run.replace("_", " ")
-    series, feed = load(run)
+    cycle = int(args[args.index("--cycle") + 1]) if "--cycle" in args else None
+    censored = "--censored" in args
+    series, feed = load(run, cycle)
+    if cycle:
+        run = f"{run}_c{cycle}"                       # output file names
+    order_pos = {"left": 0, "middle": 1, "right": 2}
+    jars_sorted = sorted(series, key=lambda j: (order_pos.get(feed[j]["position_left_to_right"], 9), j))
+    mixed = len({feed[j]["flour_type"] for j in series}) > 1
     summaries, plot = [], []
-    for jar in sorted(series):
-        s, ts, sm = summarise_jar(jar, series[jar], feed[jar])
+    for jar in jars_sorted:
+        s, ts, sm = summarise_jar(jar, series[jar], feed[jar], censored)
+        s["flour_class"] = feed[jar].get("flour_class", "")
         summaries.append(s)
-        label = f"Jar {jar}" + (f" ({s['position']})" if s["position"] else "") if len(series) > 1 else ""
+        label = jar_label(s, mixed) if len(series) > 1 else ""
         plot.append((label, ts, sm))
     (ROOT / "results" / f"{run}_summary.json").write_text(
         json.dumps({"run": run, "jars": summaries}, indent=2) + "\n")
 
-    fed = datetime.strptime(feed[sorted(series)[0]]["fed_at"], FMT)
-    order = sorted(series)
+    order = jars_sorted
+    fed = datetime.strptime(feed[order[0]]["fed_at"], FMT)
     vals = lambda k: [feed[j][k] for j in order]
     def amt(k):                 # one number if every jar got the same, else jar 1 / jar 2 / ...
         v = vals(k)
@@ -239,7 +293,11 @@ def main(args):
     amounts = " + ".join(f"{amt(k)} g {n}"
                          for k, n in (("starter_g", "starter"), ("flour_g", "flour"), ("water_g", "water")))
     each = " per jar" if len(series) > 1 else ""
-    subtitle = f"{'; '.join(sorted(set(vals('flour_type'))))} · {amounts}{each} · fed {fed:%b} {fed.day}, {fed.strftime('%-I:%M %p')}"
+    feds = sorted(datetime.strptime(feed[j]["fed_at"], FMT) for j in order)
+    fed_txt = (f"{fed:%b} {fed.day}, {fed.strftime('%-I:%M %p')}" if feds[0] == feds[-1] else
+               f"{feds[0]:%b} {feds[0].day}, {feds[0].strftime('%-I:%M')} to {feds[-1].strftime('%-I:%M %p')}")
+    flours_txt = "; ".join(sorted(set(vals('flour_type')))) if not mixed else "Left to right as in the legend"
+    subtitle = f"{flours_txt} · {amounts}{each} · fed {fed_txt}"
     chart(run, plot, title, subtitle)
     print(cards(run, summaries, title))
 
