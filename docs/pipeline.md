@@ -13,10 +13,11 @@ How the pieces fit (moved off the dashboard):
   `photos/<run>/` (gitignored). With no argument it lists the run folders
   on the HA machine. Deleting files under `/media/starter/` on the HA machine
   needs `sudo` (the SSH user can't).
-- **Temperature:** `sensor.starter_pantry_temperature` is the tip of the Meater
-  probe in the water jar; `sensor.starter_pantry_air_temperature` is the handle
-  reading minus `input_number.starter_air_offset`. The probe is picked
-  automatically by `sensor.starter_probe_in_use`.
+- **Temperature:** `sensor.pantry_temperature_sensor_temperature` and
+  `sensor.pantry_temperature_sensor_humidity` (Zigbee sensor in the pantry, air
+  only). Before 2026-11-16 a Meater probe in a water jar fed
+  `sensor.starter_pantry_temperature` / `sensor.starter_pantry_air_temperature`;
+  those entities are gone.
 - **Feed log:** `data/feeds.csv`. **Measured results:** `results/`.
 - **Dashboard:** "Starter" in the HA sidebar (`dashboards/starter.yaml`). Past-run
   summaries come from two scripts. `tools/measure_heights.py <run> --jar N:x0-x1 ...
