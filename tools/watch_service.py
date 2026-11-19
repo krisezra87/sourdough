@@ -5,7 +5,8 @@ Run on a timer (starter-watch.timer (installed by tools/install-watch.sh)), once
   1. asks the HA machine whether watch mode is on (the folder /media/starter/watch
      exists only while input_boolean.starter_watch is on; HA deletes it when it goes off)
   2. pulls any new frames into ~/.cache/starter-watch/
-  3. finds the Weck jar by shape (tools/jar_template.png), tracks the dough height, and
+  3. finds the Weck jar (starter rig: fixed columns; old Reolink frames: by shape,
+     tools/jar_template.png), tracks the dough height, and
      works from the rate of change, so it needs no feed time and can start mid-rise
   4. sends at most one "nearly there" and one "peaked" phone notification per session
      through the HA webhook whose URL is in tools/watch_secret (gitignored), and a
@@ -49,8 +50,17 @@ HOST, REMOTE = "ha", "/media/starter/watch"
 CACHE = Path.home() / ".cache" / "starter-watch"
 SECRET = HERE / "watch_secret"
 
-ROWS = (1500, 2000)             # band of the frame that contains the jars
-SEARCH = (800, 3500)            # columns to search for the jar
+# Two cameras, told apart by frame width so old runs still replay:
+#   Reolink (until 2026-11-19): wide pantry view, jar found by shape, colour skip
+#   starter rig (ESP32-CAM, 1600x1200): jar fixed in the nest, so fixed columns;
+#     weaker colour; no infrared mode, so a dark frame means the light was off
+RIG_WIDTH = 1600
+RIG_COLS = (600, 1000)          # middle of the jar's glass, clear of the edge refraction
+RIG_ROWS = (300, 1150)          # mid-jar down to the nest (calibrated 2026-11-19)
+RIG_WARM = 5                    # red-minus-blue that counts as dough on this camera
+RIG_DARK = 25                   # mean brightness below this = light was off; skip
+ROWS = (1500, 2000)             # Reolink: band of the frame that contains the jars
+SEARCH = (800, 3500)            # Reolink: columns to search for the jar
 TEMPLATE = HERE / "jar_template.png"   # rim and upper glass of the Weck jar
 TEMPLATE_SEARCH_ROWS = (1000, 1800)   # rows searched for the jar's rim
 TEMPLATE_MIN_SCORE = 0.35       # loose: only rules out nonsense; the jar always scores 0.4+ on a new background
@@ -107,6 +117,15 @@ def match_jar(frame):
     iy, ix = np.unravel_index(np.argmax(ncc), ncc.shape)
     x0 = SEARCH[0] + ix * 4
     return (int(x0), int(x0 + tw * 4)), float(ncc[iy, ix])
+
+
+def is_rig(a):
+    return a.shape[1] <= RIG_WIDTH
+
+
+def unusable(a):
+    """Frame can't be measured: a dark rig frame, or a Reolink night (infrared) frame."""
+    return a.mean() < RIG_DARK if is_rig(a) else colourfulness(a) < 3
 
 
 def locate(frame):
@@ -217,10 +236,10 @@ def step(sess, files, forced_jar=None):
             sess.jar = list(forced_jar)
         elif colour:
             a = load(colour[-1])
-            if colourfulness(a) < 3:        # night / infrared frame: shape match is unreliable
+            if unusable(a):                 # dark / infrared frame: shape match is unreliable
                 sess.skipped.append(colour[-1].stem)
                 return []
-            band = locate(a)
+            band = RIG_COLS if is_rig(a) else locate(a)
             if band:
                 sess.jar = list(band)
             else:
@@ -236,11 +255,14 @@ def step(sess, files, forced_jar=None):
         if f.stem in sess.meas:
             continue
         a = load(f)
-        if colourfulness(a) < 3:
+        if unusable(a):
             sess.skipped.append(f.stem)
             continue
         try:
-            s, b = measure_jar(a, x0, x1, *ROWS)
+            if is_rig(a):
+                s, b = measure_jar(a, x0, x1, *RIG_ROWS, warm=RIG_WARM)
+            else:
+                s, b = measure_jar(a, x0, x1, *ROWS)
         except ValueError:      # no warm pixels in the box at all
             sess.skipped.append(f.stem)
             continue

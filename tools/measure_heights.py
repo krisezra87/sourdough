@@ -63,7 +63,10 @@ def measure_jar_lum(a, x0, x1, y0, y1):
     return y0, y1 - 40
 
 
-def measure_jar(a, x0, x1, y0, y1, margin=60):
+def measure_jar(a, x0, x1, y0, y1, margin=60, warm=8):
+    """Surface and bottom rows of the dough in columns x0-x1, rows y0-y1. warm is the
+    red-minus-blue level that counts as dough when finding the bottom (8 suits the
+    Reolink; the starter rig's ESP32-CAM gives weaker colour)."""
     seg = a[y0:y1, x0:x1]
     rb = np.convolve((seg[:, :, 0] - seg[:, :, 2]).mean(axis=1), np.ones(9) / 9, mode="same")
     lo, hi = margin, len(rb) - 90                   # keep away from the frame edges of the band
@@ -71,7 +74,7 @@ def measure_jar(a, x0, x1, y0, y1, margin=60):
     i = p
     while i > 0 and rb[i] > 0.5 * rb[p]:
         i -= 1
-    bot = max(k for k in range(len(rb)) if rb[k] > 8)
+    bot = max(k for k in range(len(rb)) if rb[k] > warm)
     return i + y0, bot + y0
 
 

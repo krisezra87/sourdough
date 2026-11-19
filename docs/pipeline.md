@@ -5,10 +5,13 @@
 How the pieces fit (moved off the dashboard):
 
 - **Photos** are taken by `script.starter_timelapse_capture` every 30 minutes
-  while `input_boolean.starter_timelapse_active` is on. They are saved on the HA
-  machine as `/media/starter/<run>/YYYYMMDD_HHMM.jpg`, where `<run>` is the value
-  of `input_text.starter_run` at the time. A second copy is written to
-  `/media/starter/latest.jpg` for the dashboard's "Latest frame" card.
+  while `input_boolean.starter_watch` is on, from the starter rig's ESP32-CAM
+  (`camera.pantry_pantry_cam_camera`). They are saved on the HA machine as
+  `/media/starter/watch/YYYYMMDD_HHMM.jpg`, and every shot also writes
+  `/media/starter/latest.jpg` for the dashboard's "Latest frame" card. Until
+  2026-11-19 experiment runs used a Reolink camera, an experiment timelapse switch
+  and a run name (`/media/starter/<run>/`); those helpers are gone, but the old
+  run folders remain.
 - **Pulling a run to this machine:** `tools/sync.sh <run>` copies it into
   `photos/<run>/` (gitignored). With no argument it lists the run folders
   on the HA machine. Deleting files under `/media/starter/` on the HA machine
@@ -35,17 +38,15 @@ How the pieces fit (moved off the dashboard):
 A ballpark "has it peaked?" helper for making levain or reviving a starter, using
 rate of change so it can be started at any point in the rise.
 
-- **Use:** flip `input_boolean.starter_watch` on in HA with the jar in view of the
-  pantry camera. HA sets the run name to `watch`, turns on the timelapse and saves
-  frames to `/media/starter/watch/`. Flip it off when done: the timelapse stops and
-  the frames are deleted. It refuses to start while the experiment timelapse
-  (`starter_timelapse_active`) is on. Switching off also clears
-  `input_text.starter_run`, so set a run name again before the next experiment.
+- **Use:** flip `input_boolean.starter_watch` on in HA with the jar in the rig.
+  HA takes a frame right away, then every 30 minutes, into `/media/starter/watch/`.
+  Flip it off when done: the frames are deleted (the watcher archives its copy).
 - **Watcher:** `tools/watch_service.py`, run by a systemd user timer at :02 and :32
   past each hour (just after each frame). Nothing runs between frames. It checks
   whether `/media/starter/watch` exists on the HA machine, pulls new frames into
-  `~/.cache/starter-watch/`, finds the jar by shape (matches `tools/jar_template.png`, the rim and
-  upper glass of the Weck jar, so it works before anything has moved), tracks the dough
+  `~/.cache/starter-watch/`, finds the jar (rig frames: fixed columns, since the jar
+  sits in the nest; old Reolink frames, told apart by width: by shape, matching
+  `tools/jar_template.png`), tracks the dough
   height and posts to the HA webhook. The first 45 minutes of frames are ignored.
   If a quick off/on between runs leaves the cache holding frames HA no longer has, it
   clears the cache and starts a fresh session.
