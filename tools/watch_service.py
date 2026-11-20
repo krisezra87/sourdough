@@ -34,6 +34,15 @@ and tools/summarize_run.py for the experiment-grade measurement):
                   (and at least 2 h of frames, so an early bump can't trigger it)
   settle          the first 45 min of frames are ignored: the jar has just been handled
                   and freshly fed dough settles, which looks like a peak
+  noise gate      no alert unless the smoothed rise is at least 5x the frame-to-frame
+                  noise of the raw heights (each height against the mean of its two
+                  neighbours, so a steady rise doesn't count as noise). Real runs score
+                  30x or more; a surface the detector can't hold scores below 1x
+  bump            starter rig only: the jar glass above the dough and the nest collar
+                  are compared with the previous measured frame. If both change (the
+                  jar was turned, lifted or knocked), a new segment starts there: its
+                  heights get their own bottom and are shifted to carry on from the
+                  last height before the bump, so the jump isn't read as a rise or fall
 """
 import json, shutil, subprocess, sys, urllib.request
 from datetime import datetime
@@ -59,6 +68,12 @@ RIG_COLS = (600, 1000)          # middle of the jar's glass, clear of the edge r
 RIG_ROWS = (300, 1150)          # mid-jar down to the nest (calibrated 2026-11-19)
 RIG_WARM = 5                    # red-minus-blue that counts as dough on this camera
 RIG_DARK = 25                   # mean brightness below this = light was off; skip
+# bump check: (rows, cols) that change when the jar is turned or moved but not as the
+# dough rises; similarity to the previous frame is about 0.99 when untouched and 0.7
+# after the jar was moved (2026-11-19)
+RIG_BUMP_REGIONS = (((20, 280), (450, 1150)),     # jar glass above the dough
+                    ((1080, 1200), (380, 1260)))  # nest collar
+BUMP_NCC = 0.93                 # a jar move = every bump region below this
 ROWS = (1500, 2000)             # Reolink: band of the frame that contains the jars
 SEARCH = (800, 3500)            # Reolink: columns to search for the jar
 TEMPLATE = HERE / "jar_template.png"   # rim and upper glass of the Weck jar
@@ -72,6 +87,7 @@ SLOPE_WINDOW_MIN = 90
 MAX_STEP = 0.10                 # one frame can't move the height by more than this fraction (a surface mis-read, not a rise)
 NEAR_FRAMES = 3                 # "nearly there" must hold for this many frames in a row
 SETTLE_MIN = 45
+NOISE_K = 5                     # smoothed rise must be this many times the height noise
 
 
 # ---------------------------------------------------------------- measuring
@@ -144,6 +160,53 @@ def limit_steps(v, max_step=MAX_STEP):
     return out[1:]
 
 
+def similarity(a, b):
+    """Normalised correlation of two same-size gray patches (1 = identical up to exposure)."""
+    a, b = a - a.mean(), b - b.mean()
+    d = np.sqrt((a * a).sum() * (b * b).sum())
+    return float((a * b).sum() / d) if d > 0 else 1.0
+
+
+def moved(prev, cur):
+    """True if the jar was turned, lifted or knocked between two rig frames: every
+    bump region looks different, not just the part the dough rises through."""
+    g0, g1 = _gray4(prev), _gray4(cur)
+    for (y0, y1), (x0, x1) in RIG_BUMP_REGIONS:
+        r = (slice(y0 // 4, y1 // 4), slice(x0 // 4, x1 // 4))
+        if similarity(g0[r], g1[r]) >= BUMP_NCC:
+            return False
+    return True
+
+
+def noise_px(heights):
+    """Frame-to-frame noise of the raw heights in px: each height against the mean of
+    its neighbours (a steady trend cancels), robust sigma via the median."""
+    h = np.asarray(heights, dtype=float)
+    if len(h) < 3:
+        return 0.0
+    r = h[1:-1] - (h[:-2] + h[2:]) / 2
+    return float(1.4826 * np.median(np.abs(r)) / np.sqrt(1.5))
+
+
+def segment_heights(stems, meas, bumps):
+    """Heights in px for the measured frames, split into segments at each bump. Each
+    segment uses its own bottom, and is shifted to start where the previous one ended."""
+    segs = []
+    for s in stems:
+        if not segs or s in bumps:
+            segs.append([])
+        segs[-1].append(s)
+    out = []
+    for seg in segs:
+        bot = float(np.median([meas[s][1] for s in seg]))
+        h = [bot - meas[s][0] for s in seg]
+        if out:
+            off = out[-1] - h[0]
+            h = [y + off for y in h]
+        out += h
+    return out
+
+
 def median3(v):
     out = list(v)
     for i in range(1, len(v) - 1):
@@ -182,7 +245,7 @@ def decide(ts, heights, sent):
     events = []
     hrs = (ts[-1] - ts[0]) / 60.0
 
-    if rise < RISE_MIN:
+    if rise < RISE_MIN or top - low < NOISE_K * noise_px(heights):
         return events
 
     i_top = sm.index(top)
@@ -221,10 +284,11 @@ class Session:
         self.meas = d.get("meas", {})           # stem -> [surface, bottom]
         self.sent = d.get("sent", [])
         self.skipped = d.get("skipped", [])     # non-colour frames
+        self.bumps = d.get("bumps", [])         # frames where a new segment starts (jar moved)
 
     def dump(self):
-        return {"jar": self.jar, "meas": self.meas,
-                "sent": self.sent, "skipped": self.skipped}
+        return {"jar": self.jar, "meas": self.meas, "sent": self.sent,
+                "skipped": self.skipped, "bumps": self.bumps}
 
 
 def step(sess, files, forced_jar=None):
@@ -251,6 +315,9 @@ def step(sess, files, forced_jar=None):
     if sess.jar is None:
         return []
     x0, x1 = sess.jar
+    by_stem = {f.stem: f for f in files}
+    prev = None                 # last measured frame, for the bump check
+    prev_stem = next(reversed(sess.meas), None)
     for f in colour:
         if f.stem in sess.meas:
             continue
@@ -266,13 +333,18 @@ def step(sess, files, forced_jar=None):
         except ValueError:      # no warm pixels in the box at all
             sess.skipped.append(f.stem)
             continue
+        if is_rig(a) and prev_stem is not None:
+            if prev is None and prev_stem in by_stem:
+                prev = load(by_stem[prev_stem])
+            if prev is not None and moved(prev, a):
+                sess.bumps.append(f.stem)
         sess.meas[f.stem] = [int(s), int(b)]
+        prev, prev_stem = a, f.stem
 
     stems = [f.stem for f in colour if f.stem in sess.meas]
     if not stems:
         return []
-    bot = float(np.median([sess.meas[s][1] for s in stems]))
-    heights = [bot - sess.meas[s][0] for s in stems]
+    heights = segment_heights(stems, sess.meas, set(sess.bumps))
     t0 = frame_time(Path(stems[0] + ".jpg"))
     ts = [(frame_time(Path(s + ".jpg")) - t0).total_seconds() / 60.0 for s in stems]
     return [e for e in decide(ts, heights, set(sess.sent)) if e[0] not in sess.sent]
@@ -384,7 +456,7 @@ def run_once(dry, forced_jar):
             failed = True       # not recorded as sent, so the next run tries again
     if not dry:             # a dry run must not mark alerts as sent or move the jar state
         state_file.write_text(json.dumps(sess.dump()))
-    print(f"{len(files)} frames, jar={sess.jar}, sent={sess.sent}")
+    print(f"{len(files)} frames, jar={sess.jar}, sent={sess.sent}, bumps={sess.bumps}")
     if failed:
         desktop_error("an alert could not be delivered to Home Assistant (webhook failed); will retry")
         return 1
@@ -406,7 +478,7 @@ def replay(folder, forced_jar, every):
             mins = (frame_time(files[n - 1]) - t0).total_seconds() / 60.0
             print(f"{files[n - 1].stem}  (+{mins / 60:.1f} h)  {key}: {message}")
             sess.sent.append(key)
-    print(f"jar={sess.jar} frames={len(files)} sent={sess.sent}")
+    print(f"jar={sess.jar} frames={len(files)} sent={sess.sent} bumps={sess.bumps}")
 
 
 def main(argv):
