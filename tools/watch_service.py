@@ -456,6 +456,12 @@ def chart(sess, out):
     a = analyse(ts, heights) if stems else None
     ys = [1.0]
     title, sub = "Starter height: waiting for frames", ""
+    if stems:
+        # every reading as a dot (not joined: rig readings jump frame to frame, and a
+        # joined line reads as movement); the smoothed line carries the trend
+        base0 = a["sm"][0] if a is not None else float(np.median(heights[:3]))
+        ax.plot([], [], "o", color=BLUE, alpha=0.55, ms=3.5, mew=0, label="measured")
+        ys += [h / base0 for h in heights]
     done = a is not None and (a["peaked"] or "peaked" in sess.sent)
     if a is not None:
         base = a["sm"][0]
@@ -465,11 +471,11 @@ def chart(sess, out):
         early = [i for i in range(len(stems)) if i not in a["keep"]]
         ax.plot([times[i] for i in early], [heights[i] / base for i in early], "o",
                 mfc="none", mec=MUTED, ms=4, zorder=2, label=f"first {SETTLE_MIN} min")
-        ax.plot(kt, [heights[i] / base for i in a["keep"]], "o", color=BLUE, alpha=0.35,
-                ms=3.5, mew=0, zorder=2, label="each frame")
+        ax.plot(kt, [heights[i] / base for i in a["keep"]], "o", color=BLUE, alpha=0.55,
+                ms=3.5, mew=0, zorder=2)
         ax.fill_between(kt, [r - band for r in rel], [r + band for r in rel], color=BLUE,
                         alpha=0.12, lw=0, zorder=1, label="± frame noise")
-        ax.plot(kt, rel, color=BLUE, lw=2, zorder=3, label="height")
+        ax.plot(kt, rel, color=BLUE, lw=2.2, zorder=3, label="smoothed")
         ys += [r + band for r in rel] + [r - band for r in rel] + [h / base for h in heights]
         for b in sess.bumps:
             tb = frame_time(Path(b + ".jpg"))
@@ -495,6 +501,9 @@ def chart(sess, out):
             sub = (f"No clear rise yet: {a['rise'] * 100:.0f}% so far, frames vary ±{band * 100:.0f}%. ")
         else:
             sub = f"Up {a['rise'] * 100:.0f}% so far; frames vary ±{band * 100:.0f}%. "
+    if stems and a is None:
+        ax.plot(times, [h / base0 for h in heights], "o", color=BLUE, alpha=0.55, ms=3.5,
+                mew=0, zorder=2)
     if times and not done:
         t0 = times[0]
         if a is not None:
