@@ -11,6 +11,8 @@ Run on a timer (starter-watch.timer (installed by tools/install-watch.sh)), once
   4. sends at most one "nearly there" and one "peaked" phone notification per session
      through the HA webhook whose URL is in tools/watch_secret (gitignored), and a
      heartbeat after every good run; HA texts Kris if the heartbeat stops
+  5. draws the height chart (~/.cache/starter-watch/chart.png) and copies it to HA at
+     /config/www/starter/live/watch.png for the Starter dashboard
   Problems with the watcher itself (ssh, rsync, webhook, a crash) go to dunst via
   notify-send, repeats held back for 2 h.
 
@@ -22,6 +24,7 @@ Usage:
                                                   print when each alert would have fired;
                                                   --every N uses every Nth frame (to mimic
                                                   the 30 min watch cadence on a denser run)
+                                                  --chart OUT.png also draws the height chart
 
 Alert rules (ballpark on purpose, not for experiments; see tools/measure_heights.py
 and tools/summarize_run.py for the experiment-grade measurement):
@@ -214,6 +217,69 @@ def median3(v):
     return out
 
 
+# ---------------------------------------------------------------- projection
+# Feed-agnostic forecast from the frames alone. The session start (watch mode turned
+# on, normally right at the feed) stands in for the feed time. The rise is modelled
+# as a logistic curve, h(t) = b * (1 + R * S((t - t_half) / w)), the shape that
+# logistic growth of the culture gives. Before the rise shows, the forecast is the
+# prior below; each frame then reweights every candidate curve by how well it fits.
+# Priors from the 10 completed jars in results/*_summary.json (2026-10/11, whole
+# wheat and AP, 100% hydration, about 70F): half rise 4.4-10.4 h after the feed
+# (geometric mean 6.9 h); ready (90% of the rise) 2.4-5.5 h after half rise, so
+# w = (ready - half) / 2.2 = 1.1-2.5 h; rise 1.26-2.14x. Widened for fridge starters.
+PRIOR_HALF_H = (6.9, 0.35)      # (median h, log sd)
+PRIOR_W_H = (1.35, 0.35)
+PRIOR_RISE = (0.5, 0.6)         # R = rise ratio - 1
+READY_Z = 2.197                 # S = 0.9 at t_half + 2.197 w
+NOISE_FLOOR = 0.04              # never trust a fit tighter than this share of the height
+LIK_NU = 3                      # Student-t degrees of freedom for frame residuals
+
+
+def _lognorm(x, med, sd):
+    return -((np.log(x) - np.log(med)) ** 2) / (2 * sd * sd) - np.log(x)
+
+
+def project(hours, heights, noise):
+    """Forecast from frames so far. hours: since the session started; heights: px
+    (may be empty). Returns ready-time quantiles (h since start) and a sampler for
+    projected curves, as {'ready': (q10, q50, q90), 'curves': fn(t) -> (lo, mid, hi)
+    relative to the fitted start height, 'n': frames used}."""
+    th = np.arange(1.0, 24.01, 0.25)
+    ww = np.geomspace(0.5, 4.0, 16)
+    rr = np.geomspace(0.08, 2.0, 28)
+    T, W, R = np.meshgrid(th, ww, rr, indexing="ij")
+    T, W, R = T.ravel(), W.ravel(), R.ravel()
+    logp = (_lognorm(T, *PRIOR_HALF_H) + _lognorm(W, *PRIOR_W_H) + _lognorm(R, *PRIOR_RISE))
+    t = np.asarray(hours, dtype=float)
+    y = np.asarray(heights, dtype=float)
+    B = np.ones_like(T)
+    if len(y) >= 3:
+        f = 1 + R[:, None] / (1 + np.exp(-(t[None, :] - T[:, None]) / W[:, None]))
+        B = (f * y).sum(1) / (f * f).sum(1)
+        sig = max(noise, NOISE_FLOOR * float(np.median(y)))
+        r2 = ((y - B[:, None] * f) / sig) ** 2
+        # Student-t, not Gaussian: a detector jump or a stuck reading then pulls the
+        # fit less than a run of ordinary frames
+        logp = logp - ((LIK_NU + 1) / 2 * np.log1p(r2 / LIK_NU)).sum(1)
+    wt = np.exp(logp - logp.max())
+    wt /= wt.sum()
+    ready = T + READY_Z * W
+
+    def q(v, ps):
+        o = np.argsort(v)
+        c = np.cumsum(wt[o])
+        return [float(v[o][np.searchsorted(c, p)]) for p in ps]
+    idx = np.random.default_rng(0).choice(len(wt), size=400, p=wt)
+    b0 = np.median(y[:3]) if len(y) >= 3 else 1.0
+
+    def curves(tt):
+        tt = np.asarray(tt, dtype=float)
+        c = B[idx, None] * (1 + R[idx, None] / (1 + np.exp(-(tt[None, :] - T[idx, None]) / W[idx, None])))
+        c = c / b0 if len(y) >= 3 else 1 + R[idx, None] / (1 + np.exp(-(tt[None, :] - T[idx, None]) / W[idx, None]))
+        return np.percentile(c, [10, 50, 90], axis=0)
+    return {"ready": tuple(q(ready, [0.1, 0.5, 0.9])), "curves": curves, "n": int(len(y))}
+
+
 # ---------------------------------------------------------------- the decision
 
 def rolling_slopes(ts, sm):
@@ -230,29 +296,39 @@ def rolling_slopes(ts, sm):
     return out
 
 
-def decide(ts, heights, sent):
-    """ts in minutes, heights in px. Returns a list of (key, title, message)."""
+def analyse(ts, heights):
+    """ts in minutes, heights in px. The smoothed series and the numbers the alerts
+    (and the chart) work from, or None before there are 4 frames past the settle."""
     keep = [i for i, t in enumerate(ts) if t - ts[0] >= SETTLE_MIN]
     ts, heights = [ts[i] for i in keep], [heights[i] for i in keep]
     if len(heights) < 4:
-        return []
+        return None
     ts = [t - ts[0] + SETTLE_MIN for t in ts]
     sm = median3(limit_steps(heights))
     top, low = max(sm), min(sm)
-    rise = (top - low) / low
+    noise = noise_px(heights)
+    i_top = sm.index(top)
+    hrs = (ts[-1] - ts[0]) / 60.0
+    return {
+        "keep": keep, "ts": ts, "sm": sm, "top": top, "low": low, "i_top": i_top,
+        "rise": (top - low) / low, "noise": noise,
+        "clear": (top - low) / low >= RISE_MIN and top - low >= NOISE_K * noise,
+        # two points in a row below the top, and enough history, so one noisy frame
+        # or a bumped camera early on can't call a peak
+        "peaked": (len(sm) >= 6 and hrs >= 2 and i_top <= len(sm) - 3
+                   and all(y <= top * (1 - PEAK_DROP) for y in sm[-2:])),
+    }
+
+
+def decide(ts, heights, sent):
+    """ts in minutes, heights in px. Returns a list of (key, title, message)."""
+    a = analyse(ts, heights)
+    if a is None or not a["clear"]:
+        return []
+    ts, sm, top, rise, i_top, peaked = a["ts"], a["sm"], a["top"], a["rise"], a["i_top"], a["peaked"]
     slopes = rolling_slopes(ts, sm)
     known = [s for s in slopes if s is not None]
     events = []
-    hrs = (ts[-1] - ts[0]) / 60.0
-
-    if rise < RISE_MIN or top - low < NOISE_K * noise_px(heights):
-        return events
-
-    i_top = sm.index(top)
-    # two points in a row below the top, and enough history, so one noisy frame
-    # or a bumped camera early on can't call a peak
-    peaked = (len(sm) >= 6 and hrs >= 2 and i_top <= len(sm) - 3
-              and all(y <= top * (1 - PEAK_DROP) for y in sm[-2:]))
     if peaked and "peaked" not in sent:
         ago = (ts[-1] - ts[i_top]) / 60.0
         events.append(("peaked", "Starter has peaked",
@@ -347,7 +423,149 @@ def step(sess, files, forced_jar=None):
     heights = segment_heights(stems, sess.meas, set(sess.bumps))
     t0 = frame_time(Path(stems[0] + ".jpg"))
     ts = [(frame_time(Path(s + ".jpg")) - t0).total_seconds() / 60.0 for s in stems]
+    sess.series = (stems, ts, heights)
     return [e for e in decide(ts, heights, set(sess.sent)) if e[0] not in sess.sent]
+
+
+# ---------------------------------------------------------------- chart
+
+CHART_REMOTE = "/config/www/starter/live/watch.png"   # gitignored in the HA repo
+CHART_GITIGNORE = "www/starter/live/"
+
+
+def chart(sess, out):
+    """Height since the session started (the jar went into the rig), as the alerts see
+    it: raw frames as dots, the smoothed line, a band of +/- the frame-to-frame noise,
+    dotted lines at the top (time and total rise) once the rise is clear, and until the
+    peak a forecast (dashed curve, 80% band, ready-time window) from project()."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    from datetime import timedelta
+    SURF, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
+    BLUE, ORANGE, MUTED = "#2a78d6", "#eb6834", "#a3a29d"
+    stems, ts, heights = getattr(sess, "series", ([], [], []))
+    times = [frame_time(Path(s + ".jpg")) for s in stems]
+    fig, ax = plt.subplots(figsize=(9, 4.4), dpi=130, facecolor=SURF)
+    ax.set_facecolor(SURF)
+    a = analyse(ts, heights) if stems else None
+    ys = [1.0]
+    title, sub = "Starter height: waiting for frames", ""
+    done = a is not None and (a["peaked"] or "peaked" in sess.sent)
+    if a is not None:
+        base = a["sm"][0]
+        kt = [times[i] for i in a["keep"]]
+        rel = [y / base for y in a["sm"]]
+        band = a["noise"] / base
+        early = [i for i in range(len(stems)) if i not in a["keep"]]
+        ax.plot([times[i] for i in early], [heights[i] / base for i in early], "o",
+                mfc="none", mec=MUTED, ms=4, zorder=2, label=f"first {SETTLE_MIN} min")
+        ax.plot(kt, [heights[i] / base for i in a["keep"]], "o", color=BLUE, alpha=0.35,
+                ms=3.5, mew=0, zorder=2, label="each frame")
+        ax.fill_between(kt, [r - band for r in rel], [r + band for r in rel], color=BLUE,
+                        alpha=0.12, lw=0, zorder=1, label="± frame noise")
+        ax.plot(kt, rel, color=BLUE, lw=2, zorder=3, label="height")
+        ys += [r + band for r in rel] + [r - band for r in rel] + [h / base for h in heights]
+        for b in sess.bumps:
+            tb = frame_time(Path(b + ".jpg"))
+            ax.axvline(tb, color=MUTED, lw=1, ls=(0, (4, 3)), zorder=1)
+            ax.annotate("jar moved", (tb, 0), xycoords=("data", "axes fraction"),
+                        xytext=(3, 6), textcoords="offset points", color=INK2, fontsize=8)
+        top_rel = a["top"] / base
+        if a["clear"]:
+            tt = kt[a["i_top"]]
+            ax.axvline(tt, color=INK2, lw=1.2, ls=":", zorder=4)
+            ax.axhline(top_rel, color=INK2, lw=1.2, ls=":", zorder=4)
+            ax.annotate(f"{'peak' if done else 'highest so far'} {tt:%-I:%M %p}", (tt, 0),
+                        xycoords=("data", "axes fraction"), xytext=(4, 6),
+                        textcoords="offset points", color=INK, fontsize=9)
+            ax.annotate(f"total rise {a['rise'] * 100:.0f}%", (1, top_rel),
+                        xycoords=("axes fraction", "data"), xytext=(-4, 4), ha="right",
+                        textcoords="offset points", color=INK, fontsize=9)
+            ys.append(top_rel * 1.05)
+        if done:
+            title = "Starter has peaked"
+            sub = f"Up {a['rise'] * 100:.0f}%; frames vary ±{band * 100:.0f}% around the line."
+        elif not a["clear"]:
+            sub = (f"No clear rise yet: {a['rise'] * 100:.0f}% so far, frames vary ±{band * 100:.0f}%. ")
+        else:
+            sub = f"Up {a['rise'] * 100:.0f}% so far; frames vary ±{band * 100:.0f}%. "
+    if times and not done:
+        t0 = times[0]
+        if a is not None:
+            hrs = [ts[i] / 60.0 for i in a["keep"]]
+            p = project(hrs, [heights[i] for i in a["keep"]], a["noise"])
+            last_h = hrs[-1]
+        else:
+            p = project([], [], 0.0)
+            last_h = ts[-1] / 60.0 if ts else 0.0
+        q10, q50, q90 = p["ready"]
+        at = lambda h: t0 + timedelta(hours=float(h))
+        fut = np.linspace(last_h, max(last_h + 0.5, min(q90 + 1.5, 30.0)), 60)
+        lo, mid, hi = p["curves"](fut)
+        ft = [at(h) for h in fut]
+        ax.fill_between(ft, lo, hi, color=ORANGE, alpha=0.12, lw=0, zorder=1, label="forecast, 80%")
+        ax.plot(ft, mid, color=ORANGE, lw=1.6, ls="--", zorder=3, label="forecast")
+        ax.axvspan(at(q10), at(q90), color=ORANGE, alpha=0.07, lw=0, zorder=0)
+        ax.axvline(at(q50), color=ORANGE, lw=1.2, ls=":", zorder=4)
+        ax.annotate(f"ready ~{at(q50):%-I:%M %p}", (at(q50), 1), xycoords=("data", "axes fraction"),
+                    xytext=(4, -14), textcoords="offset points", color=ORANGE, fontsize=9)
+        ys += list(hi) + list(lo)
+        title = f"Ready around {at(q50):%-I:%M %p}"
+        src = (f"from {p['n']} frames" if p["n"] >= 3 else
+               "from past runs only; it narrows once the rise shows")
+        sub += f"Ready between {at(q10):%-I:%M %p} and {at(q90):%-I:%M %p} (80%), {src}."
+        times_end = at(fut[-1])
+    else:
+        times_end = times[-1] if times else None
+    if times:
+        span = max(times_end - times[0], timedelta(hours=2))
+        ax.set_xlim(times[0] - span * 0.02, times[0] + span * 1.03)
+        h = span.total_seconds() / 3600
+        ax.xaxis.set_major_locator(mdates.HourLocator(interval=1 if h <= 6 else 2 if h <= 16 else 4))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%-I %p"))
+        ax.set_ylim(min(0.9, min(ys) - 0.05), max(1.3, max(ys) + 0.05))
+        leg = ax.legend(loc="lower right", bbox_to_anchor=(1, 1.0), frameon=False, fontsize=8,
+                        ncol=6, handlelength=1.4, columnspacing=1.0, borderaxespad=0.2)
+        for t in leg.get_texts():
+            t.set_color(INK2)
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.1f}×")
+    ax.grid(axis="y", color=GRID, lw=0.8)
+    ax.set_axisbelow(True)
+    for sp in ("top", "right", "left"):
+        ax.spines[sp].set_visible(False)
+    ax.spines["bottom"].set_color(GRID)
+    ax.tick_params(colors=INK2, labelsize=9, length=0)
+    start = f"since {times[0]:%a %-I:%M %p}" if times else ""
+    last = f"; last frame {times[-1]:%a %-I:%M %p}" if times else ""
+    ax.set_xlabel(f"Time of day ({start}{last})", color=INK2, fontsize=10, labelpad=8)
+    ax.set_ylabel("Height (× first height)", color=INK2, fontsize=10, labelpad=8)
+    fig.text(0.09, 0.96, title, color=INK, fontsize=13, fontweight="bold", ha="left", va="top")
+    fig.text(0.09, 0.895, sub, color=INK2, fontsize=9, ha="left", va="top")
+    fig.subplots_adjust(left=0.09, right=0.97, top=0.76, bottom=0.17)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, facecolor=SURF)
+    plt.close(fig)
+    return out
+
+
+def upload_chart(png):
+    """Copy the chart to HA's www, only once the HA checkout ignores that folder (so
+    ha-sync never commits it). Best effort: a failure here never blocks the alerts."""
+    cmd = (f"grep -qxF '{CHART_GITIGNORE}' /config/.gitignore || exit 3; "
+           f"mkdir -p {Path(CHART_REMOTE).parent} && cat > {CHART_REMOTE}.tmp "
+           f"&& mv {CHART_REMOTE}.tmp {CHART_REMOTE}")
+    try:
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", HOST, cmd], input=png.read_bytes(),
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"chart upload failed: {e}", file=sys.stderr)
+        return
+    if r.returncode == 3:
+        print(f"chart not uploaded: HA's .gitignore has no {CHART_GITIGNORE} yet (pull ha-repo there)")
+    elif r.returncode != 0:
+        print(f"chart upload failed: {r.stderr.decode()[:200]}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------- outside world
@@ -409,14 +627,14 @@ def archive_session():
     if not files:
         return
     dest = HERE.parent / "photos" / f"watch_{files[0].stem}"
-    if dest.exists():
-        return
-    dest.mkdir(parents=True)
-    for f in files:
+    dest.mkdir(parents=True, exist_ok=True)
+    new = [f for f in files if not (dest / f.name).exists()]   # tops up an earlier copy
+    for f in new:
         shutil.copy2(f, dest)
-    if (CACHE / "state.json").exists():
-        shutil.copy2(CACHE / "state.json", dest)
-    print(f"saved {len(files)} frames to {dest}")
+    for extra in ("state.json", "chart.png"):
+        if (CACHE / extra).exists():
+            shutil.copy2(CACHE / extra, dest)
+    print(f"saved {len(new)} new frames to {dest} ({len(files)} in the session)")
 
 
 def run_once(dry, forced_jar):
@@ -457,6 +675,12 @@ def run_once(dry, forced_jar):
     if not dry:             # a dry run must not mark alerts as sent or move the jar state
         state_file.write_text(json.dumps(sess.dump()))
     print(f"{len(files)} frames, jar={sess.jar}, sent={sess.sent}, bumps={sess.bumps}")
+    try:
+        png = chart(sess, CACHE / "chart.png")
+        if not dry:
+            upload_chart(png)
+    except Exception as e:  # noqa: BLE001 - the chart must never stop the alerts
+        print(f"chart failed: {type(e).__name__}: {e}", file=sys.stderr)
     if failed:
         desktop_error("an alert could not be delivered to Home Assistant (webhook failed); will retry")
         return 1
@@ -469,7 +693,7 @@ def run_once(dry, forced_jar):
     return 0
 
 
-def replay(folder, forced_jar, every):
+def replay(folder, forced_jar, every, chart_out=None):
     files = sorted(Path(folder).glob("2*.jpg"))[::every]
     sess = Session()
     t0 = frame_time(files[0])
@@ -479,6 +703,8 @@ def replay(folder, forced_jar, every):
             print(f"{files[n - 1].stem}  (+{mins / 60:.1f} h)  {key}: {message}")
             sess.sent.append(key)
     print(f"jar={sess.jar} frames={len(files)} sent={sess.sent} bumps={sess.bumps}")
+    if chart_out:
+        print(f"chart: {chart(sess, Path(chart_out))}")
 
 
 def main(argv):
@@ -488,7 +714,8 @@ def main(argv):
         forced = (int(a), int(b))
     if "--replay" in argv:
         every = int(argv[argv.index("--every") + 1]) if "--every" in argv else 1
-        return replay(argv[argv.index("--replay") + 1], forced, every)
+        out = argv[argv.index("--chart") + 1] if "--chart" in argv else None
+        return replay(argv[argv.index("--replay") + 1], forced, every, out)
     return run_once("--dry-run" in argv, forced)
 
 
