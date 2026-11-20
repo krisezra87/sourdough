@@ -75,3 +75,90 @@ rate of change so it can be started at any point in the rise.
   from an empty counter, so a missing jar shows up as flat or noisy heights and no alerts
   rather than a "can't find the jar" message. Alerts need a few hours of frames. On past runs "nearly there" came 2 to 6 h
   before the measured "ready" time for slow jars, so treat it as a prompt to go look.
+
+### Robustness, chart and forecast (added 2026-11-19/20)
+
+- **Noise gate:** no alert unless the smoothed rise is at least 5x the frame-to-frame
+  noise. Noise = each raw height against the mean of its two neighbours (a steady rise
+  cancels out), robust sigma via the median. Real archived runs score 30-215x; the first
+  rig session (2026-11-19) scored 0.2x and sent a false "peaked" before this existed.
+- **Bump detection (rig only):** the jar glass above the dough (rows 20-280) and the
+  nest collar (rows 1080-1200) are compared with the previous measured frame. About
+  0.99 similarity when untouched, about 0.7 after the jar was moved; below 0.93 in both
+  starts a new segment. Each segment gets its own bottom and is shifted to continue
+  from the last height before the bump. Shown on the chart as "jar moved".
+- **Chart:** redrawn after every run to `~/.cache/starter-watch/chart.png` and copied
+  to HA `/config/www/starter/live/watch.png` (gitignored in ha-repo; the folder is owned
+  by `hassio` so the watcher can write it). Starter dashboard, "Height" card. Dots =
+  each frame, blue line = smoothed height, blue band = +/- frame noise, dotted lines =
+  top time and total rise once the rise is clear. `--replay DIR --chart OUT.png` draws
+  one for a saved session.
+- **Forecast (feed-agnostic):** nothing is entered per feed. The session start (watch
+  turned on) stands in for the feed time. The rise is modelled as a logistic curve,
+  h(t) = b * (1 + R * S((t - t_half) / w)), which is what logistic growth of the culture
+  gives. Ready (90% of the rise) = t_half + 2.2 w.
+  - Prior (what it believes before the rise shows), from the 10 completed jars in
+    `results/*_summary.json`: half rise median 6.9 h after the feed, w median 1.35 h,
+    rise R median 0.5 (1.5x), all log-normal and widened for fridge starters.
+  - Update: a grid of about 41,000 candidate curves (t_half 1-24 h, w 0.5-4 h,
+    R 0.08-2.0). Each frame reweights every candidate by how well it fits; b is solved
+    exactly per candidate. The chart shows the median curve (dashed orange), the 80%
+    band, and the 10-90% ready window.
+  - Backtest on the 7 Reolink watch sessions, checkpoints every 1.5 h up to the peak:
+    the true ready time fell inside the 80% range 23 of 32 times; median error 1.1 h.
+
+#### Why Student-t instead of Gaussian (to read later)
+
+This is the Student-t *distribution* used as the error model, not a Student's t-test.
+The forecast scores each candidate curve by how far each frame sits from it, in units
+of the noise sigma (call that r). The error model decides how much a miss costs:
+
+| Frame off by | Gaussian cost r^2/2 | Student-t (nu = 3) cost 2 ln(1 + r^2/3) |
+|---|---|---|
+| 1 sigma | 0.5 | 0.58 |
+| 3 sigma | 4.5 | 2.77 |
+| 5 sigma | 12.5 | 4.47 |
+| 10 sigma | 50 | 7.07 |
+
+Ordinary frames cost about the same either way. A detector jump (a frame 10 sigma off)
+costs 50 under the Gaussian, as much as a hundred good frames fitting slightly worse,
+so one bad frame can drag the whole fit. Under Student-t it costs about 7, so the curve
+follows the run of good frames. nu sets how heavy the tails are; nu -> infinity is the
+Gaussian. Settings chosen by backtest (80% range coverage out of 32 checkpoints):
+
+| Noise floor | Gaussian | Student-t nu=3 |
+|---|---|---|
+| 2% of height | 18 | 21 |
+| 4% of height | 23 | **23 (used)** |
+| 6% of height | 23 | 22 |
+
+The noise floor matters more than the tails on these runs: a fit that trusts the
+frames to better than 4% of the height is overconfident, because the logistic shape
+is itself only approximate. Student-t was kept for the jumpy rig readings.
+
+#### Not built yet
+
+- **Temperature term.** The pantry has a temperature sensor
+  (`sensor.pantry_temperature_sensor_temperature`). The toaster oven and the composter
+  warm the pantry when they run, which should speed the rise. Plan: run the logistic on
+  "warm time" instead of clock time, tau = integral of 2^((T(t) - T_ref) / dT) dt (the
+  growth rate doubles every dT; a common rule of thumb is about 18F), fit dT across
+  sessions once some have clearly different temperatures. The data is already being
+  collected (see "Temperature data" below).
+
+#### Temperature data (collected since 2026-11-20)
+
+Every watcher run reads the pantry sensor's 5-minute statistics for the session (from
+30 min before the first frame) out of HA's recorder database, read-only
+(`ssh ha sudo sqlite3 -readonly`), and merges them into
+`~/.cache/starter-watch/temperature.csv` (`time_local,period,mean_f,min_f,max_f`).
+Rows already saved are kept, so HA purging old data doesn't lose any. The archive copies
+the file into `photos/watch_<first frame>/` with the frames. HA keeps 5-minute
+statistics about 10 days and hourly statistics indefinitely; for an older session,
+`tools/watch_service.py --save-temps photos/watch_<first frame>` falls back to hourly
+rows (`period` = `hour`). The sensor went in on 2026-11-16, so sessions before that
+have no temperature.
+- **Better height measurement:** read the level through the nest collar's window, then
+  a learned model (row profiles, then a small CNN) once about 300 rig frames over 6+
+  sessions are archived. See CLAUDE.md, "Height model data".
+- Dropped by choice: a "ready around X" phone notification (the chart is enough).

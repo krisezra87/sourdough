@@ -11,7 +11,9 @@ Run on a timer (starter-watch.timer (installed by tools/install-watch.sh)), once
   4. sends at most one "nearly there" and one "peaked" phone notification per session
      through the HA webhook whose URL is in tools/watch_secret (gitignored), and a
      heartbeat after every good run; HA texts Kris if the heartbeat stops
-  5. draws the height chart (~/.cache/starter-watch/chart.png) and copies it to HA at
+  5. saves the pantry temperature (HA 5-minute statistics, read-only over ssh) for the
+     session to ~/.cache/starter-watch/temperature.csv; archived with the frames
+  6. draws the height chart (~/.cache/starter-watch/chart.png) and copies it to HA at
      /config/www/starter/live/watch.png for the Starter dashboard
   Problems with the watcher itself (ssh, rsync, webhook, a crash) go to dunst via
   notify-send, repeats held back for 2 h.
@@ -25,6 +27,8 @@ Usage:
                                                   --every N uses every Nth frame (to mimic
                                                   the 30 min watch cadence on a denser run)
                                                   --chart OUT.png also draws the height chart
+  tools/watch_service.py --save-temps photos/watch_<first frame>
+                                                  add the pantry temperature to an archived session
 
 Alert rules (ballpark on purpose, not for experiments; see tools/measure_heights.py
 and tools/summarize_run.py for the experiment-grade measurement):
@@ -48,7 +52,7 @@ and tools/summarize_run.py for the experiment-grade measurement):
                   last height before the bump, so the jump isn't read as a rise or fall
 """
 import json, shutil, subprocess, sys, urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -620,6 +624,46 @@ def desktop_error(message):
         pass
 
 
+TEMP_SENSOR = "sensor.pantry_temperature_sensor_temperature"
+TEMP_HEADER = "time_local,period,mean_f,min_f,max_f"
+
+
+def pull_temperature(start, end):
+    """Pantry temperature statistics from HA's recorder database between two local
+    datetimes, read-only over ssh: 5-minute rows (HA keeps these about 10 days), or
+    hourly rows (kept indefinitely) when no 5-minute rows exist for the span.
+    Returns CSV lines without the header."""
+    rows = []
+    for table, period in (("statistics_short_term", "5min"), ("statistics", "hour")):
+        sql = (f"select datetime(s.start_ts,'unixepoch','localtime'),'{period}',"
+               f"round(s.mean,2),round(s.min,2),round(s.max,2) from {table} s "
+               f"join statistics_meta m on m.id=s.metadata_id "
+               f"where m.statistic_id='{TEMP_SENSOR}' "
+               f"and s.start_ts >= strftime('%s','{start:%Y-%m-%d %H:%M:%S}','utc') "
+               f"and s.start_ts <= strftime('%s','{end:%Y-%m-%d %H:%M:%S}','utc') "
+               f"order by s.start_ts")
+        r = ssh(f'sudo sqlite3 -readonly -csv /config/home-assistant_v2.db "{sql}"')
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip()[:200])
+        rows = [ln.replace('"', "") for ln in r.stdout.splitlines() if ln.strip()]
+        if rows:
+            break
+    return rows
+
+
+def save_temperature(dest, start, end):
+    """Merge the pantry temperature for start..end into dest (CSV, one row per
+    statistics period), keeping rows HA may have purged since an earlier pull."""
+    have = {}
+    if dest.exists():
+        for ln in dest.read_text().splitlines()[1:]:
+            have[ln.split(",")[0]] = ln
+    for ln in pull_temperature(start, end):
+        have[ln.split(",")[0]] = ln
+    dest.write_text("\n".join([TEMP_HEADER] + [have[k] for k in sorted(have)]) + "\n")
+    return len(have)
+
+
 def archive_session():
     """Keep a copy of the session's frames and state in photos/watch_<first frame>
     (gitignored) before the cache is cleared, as test data for the detector."""
@@ -631,7 +675,7 @@ def archive_session():
     new = [f for f in files if not (dest / f.name).exists()]   # tops up an earlier copy
     for f in new:
         shutil.copy2(f, dest)
-    for extra in ("state.json", "chart.png"):
+    for extra in ("state.json", "chart.png", "temperature.csv"):
         if (CACHE / extra).exists():
             shutil.copy2(CACHE / extra, dest)
     print(f"saved {len(new)} new frames to {dest} ({len(files)} in the session)")
@@ -665,6 +709,12 @@ def run_once(dry, forced_jar):
         return 1
     sess = Session(json.loads(state_file.read_text()) if state_file.exists() else None)
     files = sorted(frames.glob("2*.jpg"))
+    if files and not dry:   # pantry temperature for the session, kept next to the frames
+        try:
+            save_temperature(CACHE / "temperature.csv", frame_time(files[0]) - timedelta(minutes=30),
+                             datetime.now())
+        except Exception as e:  # noqa: BLE001 - never blocks the alerts
+            print(f"temperature not saved: {type(e).__name__}: {e}", file=sys.stderr)
     events = step(sess, files, forced_jar)
     failed = False
     for key, title, message in events:
@@ -712,6 +762,14 @@ def main(argv):
     if "--jar" in argv:
         a, b = argv[argv.index("--jar") + 1].split("-")
         forced = (int(a), int(b))
+    if "--save-temps" in argv:
+        # backfill an archived session: --save-temps photos/watch_<first frame>
+        d = Path(argv[argv.index("--save-temps") + 1])
+        fs = sorted(d.glob("2*.jpg"))
+        n = save_temperature(d / "temperature.csv", frame_time(fs[0]) - timedelta(minutes=30),
+                             frame_time(fs[-1]) + timedelta(minutes=30))
+        print(f"{n} temperature rows in {d / 'temperature.csv'}")
+        return 0
     if "--replay" in argv:
         every = int(argv[argv.index("--every") + 1]) if "--every" in argv else 1
         out = argv[argv.index("--chart") + 1] if "--chart" in argv else None
